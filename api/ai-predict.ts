@@ -79,7 +79,8 @@ ${historyText}
 1. 提案する重量は必ず2kg単位（例：60, 62, 64...）としてください。
 2. 安全性を考慮し、急激な重量増加は避けてください。
 3. 過去の成長曲線から、今日のコンディションで達成可能な目標を提案してください。
-4. reasoningとadviceは、自然な日本語で作成してください。「去の成長」のような不自然な略称は使わず「過去の成長」としてください。
+4. reasoningとadviceは、自然な日本語で作成してください。「去の成長」のような不自然な略称は絶対に使わず「過去の成長」としてください。
+5. 回答は必ず指定されたJSON形式のみで行い、余計なテキストを含めないでください。
 
 【回答形式】
 以下のJSON形式で回答してください：
@@ -110,11 +111,23 @@ ${historyText}
       response_format: { type: 'json_object' }
     });
 
-    const responseText = completion.choices[0]?.message?.content || '{}';
-    let prediction;
+    let responseText = completion.choices[0]?.message?.content || '{}';
+    // Markdownのコードブロックが含まれている場合は除去
+    responseText = responseText.replace(/```json\n?|\n?```/g, '').trim();
     
+    let prediction;
     try {
       prediction = JSON.parse(responseText);
+      
+      // 必須フィールドの欠損チェックとデフォルト値の適用
+      prediction = {
+        recommendedWeight: prediction.recommendedWeight ?? roundToTwoKg(latestRecord.weight),
+        recommendedRepsMin: prediction.recommendedRepsMin ?? Math.max(1, latestRecord.reps - 2),
+        recommendedRepsMax: prediction.recommendedRepsMax ?? (prediction.recommendedRepsMin ? prediction.recommendedRepsMin + 2 : latestRecord.reps + 2),
+        confidence: prediction.confidence ?? 50,
+        reasoning: prediction.reasoning || '過去のトレーニング履歴に基づく推定です。',
+        advice: prediction.advice || 'まずはこの設定でフォームを意識して行いましょう。'
+      };
     } catch {
       // JSONパースに失敗した場合はデフォルト値を返す
       prediction = {

@@ -1217,12 +1217,22 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
       }
 
       const data = await response.json();
-      setAiPrediction(data.prediction);
+      const prediction = data.prediction;
+      
+      // フィールドがundefinedにならないようにデフォルト値を設定
+      const safePrediction = {
+        recommendedWeight: prediction.recommendedWeight ?? 0,
+        recommendedRepsMin: prediction.recommendedRepsMin ?? 0,
+        recommendedRepsMax: prediction.recommendedRepsMax ?? 0,
+        confidence: prediction.confidence ?? 0,
+        reasoning: prediction.reasoning || '過去の成長に基づく適切な増加。',
+        advice: prediction.advice || 'フォームを重視して取り組んでください。'
+      };
+      
+      setAiPrediction(safePrediction);
       
       // タイピングエフェクトでアドバイスを表示
-      const reasoning = data.prediction.reasoning || '過去の成長に基づく適切な増加。';
-      const advice = data.prediction.advice || 'フォームを重視して取り組んでください。';
-      typeText(reasoning + ' ' + advice);
+      typeText(safePrediction.reasoning + ' ' + safePrediction.advice);
     } catch (error: any) {
       setAiError(error.message || 'AI予測の取得に失敗しました');
     } finally {
