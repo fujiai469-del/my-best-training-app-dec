@@ -1101,6 +1101,13 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
     }
   }, [targetDate, workouts]);
   const [currentExerciseName, setCurrentExerciseName] = useState('');
+
+  // 種目が変わったらAIパネルを閉じる
+  useEffect(() => {
+    setShowAiPanel(false);
+    setAiPrediction(null);
+    setAiError(null);
+  }, [currentExerciseName]);
   const [weightInput, setWeightInput] = useState('');
   const [repsInput, setRepsInput] = useState('');
   const [cardioSeconds, setCardioSeconds] = useState(0);
@@ -1230,9 +1237,6 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
       };
       
       setAiPrediction(safePrediction);
-      
-      // タイピングエフェクトでアドバイスを表示
-      typeText(safePrediction.reasoning + ' ' + safePrediction.advice);
     } catch (error: any) {
       setAiError(error.message || 'AI予測の取得に失敗しました');
     } finally {
@@ -1481,13 +1485,7 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
                       </div>
                     </div>
 
-                    {/* タイピングエフェクトでアドバイス表示 */}
-                    <div className="bg-[#0a0a0a]/50 rounded p-2 border border-[#1a1a1a]">
-                      <p className="text-[10px] text-[#888] leading-relaxed min-h-[2em]">
-                        {typingText}
-                        {isTyping && <span className="animate-pulse text-[#D4AF37]">|</span>}
-                      </p>
-                    </div>
+
 
                     {/* 適用ボタン */}
                     <button
