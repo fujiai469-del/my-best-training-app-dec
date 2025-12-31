@@ -76,9 +76,10 @@ ${historyText}
 - 直近の記録: ${latestRecord.weight}kg × ${latestRecord.reps}回
 
 【制約条件】
-1. 提案する重量は必ず2kg単位（例：60, 62, 64...）としてください
-2. 安全性を考慮し、急激な重量増加は避けてください
-3. 過去の成長曲線から、今日のコンディションで達成可能な目標を提案してください
+1. 提案する重量は必ず2kg単位（例：60, 62, 64...）としてください。
+2. 安全性を考慮し、急激な重量増加は避けてください。
+3. 過去の成長曲線から、今日のコンディションで達成可能な目標を提案してください。
+4. reasoningとadviceは、自然な日本語で作成してください。「去の成長」のような不自然な略称は使わず「過去の成長」としてください。
 
 【回答形式】
 以下のJSON形式で回答してください：
@@ -121,8 +122,8 @@ ${historyText}
         recommendedRepsMin: Math.max(1, latestRecord.reps - 2),
         recommendedRepsMax: latestRecord.reps + 2,
         confidence: 50,
-        reasoning: '履歴データに基づく推定',
-        advice: '無理せず取り組みましょう'
+        reasoning: '過去のトレーニング履歴に基づく推定です。',
+        advice: 'まずはこの設定でフォームを意識して行いましょう。'
       };
     }
 

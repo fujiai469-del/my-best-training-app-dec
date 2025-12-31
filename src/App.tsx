@@ -1119,13 +1119,9 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
     for (const workout of sortedWorkouts) {
       const exercise = workout.exercises?.find((e: Exercise) => e.name === currentExerciseName);
       if (exercise && exercise.sets.length > 0) {
-        // 最後のセットを取得
-        const lastSet = exercise.sets[exercise.sets.length - 1];
         return {
           date: workout.date,
-          weight: lastSet.weight,
-          reps: lastSet.reps,
-          distanceKm: lastSet.distanceKm
+          sets: exercise.sets
         };
       }
     }
@@ -1224,7 +1220,9 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
       setAiPrediction(data.prediction);
       
       // タイピングエフェクトでアドバイスを表示
-      typeText(data.prediction.reasoning + ' ' + data.prediction.advice);
+      const reasoning = data.prediction.reasoning || '過去の成長に基づく適切な増加。';
+      const advice = data.prediction.advice || 'フォームを重視して取り組んでください。';
+      typeText(reasoning + ' ' + advice);
     } catch (error: any) {
       setAiError(error.message || 'AI予測の取得に失敗しました');
     } finally {
@@ -1328,30 +1326,38 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
               <div className="flex-1">
                 <p className="text-[9px] text-[#555] uppercase tracking-wider mb-1">前回の記録</p>
                 {getLastRecord ? (
-                  <div className="flex items-baseline gap-2">
-                    {isCardio ? (
-                      <>
-                        <span className="text-[#D4AF37] font-mono font-bold text-lg">
-                          {getLastRecord.distanceKm || '--'} km
-                        </span>
-                        <span className="text-[#555]">×</span>
-                        <span className="text-[#e5e5e5] font-mono font-bold text-lg">
-                          {formatDuration(getLastRecord.reps)}
-                        </span>
-                        <span className="text-[10px] text-[#444] ml-2">({getLastRecord.date})</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="text-[#D4AF37] font-mono font-bold text-lg">
-                          {getLastRecord.weight} kg
-                        </span>
-                        <span className="text-[#555]">×</span>
-                        <span className="text-[#e5e5e5] font-mono font-bold text-lg">
-                          {getLastRecord.reps} 回
-                        </span>
-                        <span className="text-[10px] text-[#444] ml-2">({getLastRecord.date})</span>
-                      </>
-                    )}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-[#444]">({getLastRecord.date})</span>
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      {getLastRecord.sets.map((set: SetData, idx: number) => (
+                        <div key={idx} className="flex items-baseline gap-1">
+                          <span className="text-[10px] text-[#555] font-mono">#{idx + 1}</span>
+                          {isCardio ? (
+                            <>
+                              <span className="text-[#D4AF37] font-mono font-bold text-sm">
+                                {set.distanceKm || '--'}km
+                              </span>
+                              <span className="text-[#555] text-[10px]">×</span>
+                              <span className="text-[#e5e5e5] font-mono font-bold text-sm">
+                                {formatDuration(set.reps)}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-[#D4AF37] font-mono font-bold text-sm">
+                                {set.weight}kg
+                              </span>
+                              <span className="text-[#555] text-[10px]">×</span>
+                              <span className="text-[#e5e5e5] font-mono font-bold text-sm">
+                                {set.reps}回
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <p className="text-[#444] text-xs italic">前回の記録なし</p>
