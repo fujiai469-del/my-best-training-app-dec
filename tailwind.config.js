@@ -6,6 +6,11 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Inter', 'Noto Sans JP', 'sans-serif'],
+        mono: ['JetBrains Mono', 'monospace'],
+        jp: ['Noto Sans JP', 'sans-serif'],
+      },
       colors: {
         gold: {
           DEFAULT: '#D4AF37',
