@@ -1087,6 +1087,8 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
   const [memo, setMemo] = useState<string>('');
   const [isCalcOpen, setIsCalcOpen] = useState(false);
   const [isReceiptOpen, setIsReceiptOpen] = useState(false); // ★ NEW: レシートモーダル用
+  const [showPRModal, setShowPRModal] = useState(false); // ★ NEW: PR演出用
+  const [prWeight, setPrWeight] = useState(0); // ★ NEW: PRの重量
 
   useEffect(() => {
     const session = workouts.find((w: WorkoutSession) => w.date === targetDate);
@@ -1257,6 +1259,17 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
     const session: WorkoutSession = { id: targetDate, date: targetDate, exercises: newEx, bodyWeight: wVal, memo: newMemo };
     onSave(session);
   };
+  
+  // ★ NEW: PR演出を表示する関数
+  const showPRCelebration = (weight: number) => {
+    setPrWeight(weight);
+    setShowPRModal(true);
+    // 3秒後に自動で閉じる
+    setTimeout(() => {
+      setShowPRModal(false);
+    }, 3000);
+  };
+  
   const addSet = () => {
     let w = parseFloat(weightInput);
     let r = isCardio ? cardioSeconds : parseInt(repsInput);
@@ -1298,7 +1311,10 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
       timerEventTarget.dispatchEvent(new CustomEvent('startTimer'));
     }
     
-    if(isNewPR) alert(`🎉 NEW PR! (${currentSetVolume.toLocaleString()} kg)`);
+    if(isNewPR) {
+      // カスタムPR演出を表示
+      showPRCelebration(effectiveWeight);
+    }
   };
   const removeSet = (exIndex: number, setIndex: number) => {
     let updated = [...exercises];
@@ -1584,6 +1600,62 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
         {exercises.length === 0 && (<div className="py-8 text-center opacity-30"><Dumbbell size={32} className="mx-auto mb-2 text-[#333]" /><p className="text-[10px] text-[#666]">記録がありません</p></div>)}
       </div>
       <MetricCard initialWeight={bodyWeight} initialMemo={memo} onSave={handleMetricsSave} />
+      
+      {/* ★ NEW: PR演出モーダル */}
+      {showPRModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+          <div className="relative animate-in zoom-in-95 fade-in duration-300">
+            {/* 外側の光るリングエフェクト */}
+            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-[#FFD700] via-[#FFA500] to-[#FF4500] blur-3xl opacity-60 animate-pulse"></div>
+            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-[#FF4500] via-[#FFA500] to-[#FFD700] blur-2xl opacity-40 animate-spin" style={{animationDuration: '3s'}}></div>
+            
+            {/* メインコンテンツ */}
+            <div className="relative bg-gradient-to-br from-[#1a1a1a] to-[#0a0a0a] rounded-3xl p-12 border-4 border-[#FFD700] shadow-2xl">
+              {/* パーティクルエフェクト */}
+              <div className="absolute inset-0 overflow-hidden rounded-3xl">
+                {[...Array(20)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="absolute w-2 h-2 bg-[#FFD700] rounded-full animate-ping"
+                    style={{
+                      top: `${Math.random() * 100}%`,
+                      left: `${Math.random() * 100}%`,
+                      animationDelay: `${Math.random() * 2}s`,
+                      animationDuration: `${1 + Math.random() * 2}s`
+                    }}
+                  />
+                ))}
+              </div>
+              
+              {/* トロフィーアイコン */}
+              <div className="relative flex justify-center mb-6">
+                <div className="relative">
+                  <Trophy size={80} className="text-[#FFD700] drop-shadow-[0_0_20px_rgba(255,215,0,0.8)] animate-bounce" />
+                  <div className="absolute inset-0 bg-[#FFD700] blur-xl opacity-50 animate-pulse"></div>
+                </div>
+              </div>
+              
+              {/* テキスト */}
+              <div className="text-center space-y-4 relative z-10">
+                <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FFD700] via-[#FFA500] to-[#FF4500] animate-pulse">
+                  NEW RECORD!
+                </h2>
+                <div className="flex items-baseline justify-center gap-3">
+                  <span className="text-6xl font-black font-mono text-[#FFD700] drop-shadow-[0_0_15px_rgba(255,215,0,0.8)]">
+                    {prWeight}
+                  </span>
+                  <span className="text-3xl font-bold text-[#FFA500]">kg</span>
+                </div>
+                <div className="flex justify-center gap-2 mt-4">
+                  <Zap size={24} className="text-[#FFD700] animate-pulse" />
+                  <Sparkles size={24} className="text-[#FFA500] animate-pulse" style={{animationDelay: '0.2s'}} />
+                  <Zap size={24} className="text-[#FF4500] animate-pulse" style={{animationDelay: '0.4s'}} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
