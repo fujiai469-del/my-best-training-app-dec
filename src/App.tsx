@@ -1155,8 +1155,6 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [showAiPanel, setShowAiPanel] = useState(false);
-  const [typingText, setTypingText] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
 
   // ★ 種目の全履歴を取得
   const getExerciseHistory = useMemo(() => {
@@ -1180,23 +1178,6 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
     }
     return history;
   }, [currentExerciseName, workouts, isCardio]);
-
-  // ★ タイピングエフェクト
-  const typeText = (text: string, callback?: () => void) => {
-    setIsTyping(true);
-    setTypingText('');
-    let index = 0;
-    const interval = setInterval(() => {
-      if (index < text.length) {
-        setTypingText(prev => prev + text[index]);
-        index++;
-      } else {
-        clearInterval(interval);
-        setIsTyping(false);
-        if (callback) callback();
-      }
-    }, 30);
-  };
 
   // ★ AI予測を取得
   const fetchAiPrediction = async () => {
@@ -1815,7 +1796,7 @@ export default function TrainingLogAppDeploy() {
     } catch (e) {
       console.error("Save error:", e);
       setSyncStatus('error');
-      alert("保存に失敗しました。\\n理由: " + (e as Error).message);
+      alert("保存に失敗しました。\n理由: " + (e as Error).message);
     }
   };
 
