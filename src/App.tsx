@@ -4,11 +4,12 @@ import {
   ChevronLeft, ChevronRight, Timer, X, Edit3, FileText, CheckCircle2, 
   Activity, Scale, Calculator, Bike, Play, Pause, Cloud, Loader2,
   User as UserIcon, Trophy, Globe, MapPin, CheckCircle, Mail, Lock,
-  Share2, Download, Sparkles, Brain, Zap, Target
+  Share2, Download, Sparkles, Brain, Zap, Target, Flame, Copy
 } from 'lucide-react';
-import { 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, 
-  ResponsiveContainer, Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
+  ResponsiveContainer, Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  BarChart, Bar
 } from 'recharts';
 import { toPng } from 'html-to-image'; // ★ NEW: 画像生成ライブラリ
 import CalendarHeatmap from 'react-calendar-heatmap';
@@ -21,8 +22,8 @@ import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut
 } from 'firebase/auth';
 import type { User } from 'firebase/auth';
-import { 
-  getFirestore, collection, doc, setDoc, onSnapshot, query 
+import {
+  getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query
 } from 'firebase/firestore';
 
 // --- Firebase設定 ---
@@ -62,6 +63,13 @@ type WorkoutSession = {
   bodyWeight?: number | null;
   memo?: string;
   updatedAt?: number;
+};
+
+type WorkoutTemplate = {
+  id: string;
+  name: string;
+  exerciseNames: string[];
+  createdAt: number;
 };
 
 // --- 定数 ---
@@ -188,6 +196,69 @@ const getTravelProgress = (totalDistance: number) => {
         progress: segmentTotal > 0 ? Math.min(100, (distanceInSegment / segmentTotal) * 100) : 100,
         remainingDistance: Math.max(0, segmentTotal - distanceInSegment)
     };
+};
+
+// --- Streak計算 ---
+const calculateStreak = (workouts: WorkoutSession[]): { current: number; best: number } => {
+  if (workouts.length === 0) return { current: 0, best: 0 };
+
+  const uniqueDates = Array.from(new Set(
+    workouts.map(w => w.date)
+  )).sort();
+
+  if (uniqueDates.length === 0) return { current: 0, best: 0 };
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStr = formatDate(today);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = formatDate(yesterday);
+
+  // 現在のストリーク（今日 or 昨日から逆算）
+  let currentStreak = 0;
+  const latestDate = uniqueDates[uniqueDates.length - 1];
+  if (latestDate === todayStr || latestDate === yesterdayStr) {
+    currentStreak = 1;
+    for (let i = uniqueDates.length - 2; i >= 0; i--) {
+      const curr = new Date(uniqueDates[i + 1]);
+      const prev = new Date(uniqueDates[i]);
+      const diffDays = Math.round((curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays === 1) {
+        currentStreak++;
+      } else {
+        break;
+      }
+    }
+  }
+
+  // 最高ストリーク
+  let bestStreak = 1;
+  let tempStreak = 1;
+  for (let i = 1; i < uniqueDates.length; i++) {
+    const curr = new Date(uniqueDates[i]);
+    const prev = new Date(uniqueDates[i - 1]);
+    const diffDays = Math.round((curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays === 1) {
+      tempStreak++;
+      bestStreak = Math.max(bestStreak, tempStreak);
+    } else {
+      tempStreak = 1;
+    }
+  }
+  bestStreak = Math.max(bestStreak, currentStreak);
+
+  return { current: currentStreak, best: bestStreak };
+};
+
+// --- ISO週番号取得 ---
+const getISOWeek = (date: Date): string => {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`;
 };
 
 // --- UI Components ---
@@ -408,6 +479,121 @@ const EmailAuthModal = ({ isOpen, onClose, onAuth }: any) => {
     );
 };
 
+// ★ NEW: ワークアウトテンプレートモーダル ★
+const TemplateModal = ({ isOpen, onClose, currentExercises, onLoadTemplate, userId }: {
+  isOpen: boolean;
+  onClose: () => void;
+  currentExercises: Exercise[];
+  onLoadTemplate: (exerciseNames: string[]) => void;
+  userId: string | null;
+}) => {
+  const [templates, setTemplates] = useState<WorkoutTemplate[]>([]);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [activeView, setActiveView] = useState<'list' | 'create'>('list');
+
+  useEffect(() => {
+    if (!userId) return;
+    const templatesRef = collection(db, 'users', userId, 'templates');
+    const q = query(templatesRef);
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const loaded: WorkoutTemplate[] = [];
+      snapshot.forEach((d) => { loaded.push(d.data() as WorkoutTemplate); });
+      setTemplates(loaded.sort((a, b) => b.createdAt - a.createdAt));
+    });
+    return () => unsubscribe();
+  }, [userId]);
+
+  const handleSaveTemplate = async () => {
+    if (!userId || !newTemplateName.trim() || currentExercises.length === 0) return;
+    const template: WorkoutTemplate = {
+      id: Date.now().toString(),
+      name: newTemplateName.trim(),
+      exerciseNames: currentExercises.map(ex => ex.name),
+      createdAt: Date.now()
+    };
+    await setDoc(doc(collection(db, 'users', userId, 'templates'), template.id), template);
+    setNewTemplateName('');
+    setActiveView('list');
+  };
+
+  const handleDeleteTemplate = async (templateId: string) => {
+    if (!userId || !window.confirm('このテンプレートを削除しますか？')) return;
+    await deleteDoc(doc(collection(db, 'users', userId, 'templates'), templateId));
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-[#111] border border-[#333] w-full max-w-md rounded-xl p-6 shadow-2xl relative">
+        <button onClick={onClose} className="absolute top-4 right-4 text-[#666] hover:text-white"><X size={20}/></button>
+        <h3 className="text-[#D4AF37] font-bold text-lg mb-4 flex items-center gap-2">
+          <Copy size={18}/> テンプレート
+        </h3>
+
+        <div className="flex gap-2 mb-4 bg-[#0a0a0a] p-1 rounded border border-[#222]">
+          <button onClick={() => setActiveView('list')} className={`flex-1 py-2 text-xs font-bold rounded transition-all ${activeView === 'list' ? 'bg-[#D4AF37] text-black' : 'text-[#666]'}`}>
+            一覧
+          </button>
+          <button onClick={() => setActiveView('create')} className={`flex-1 py-2 text-xs font-bold rounded transition-all ${activeView === 'create' ? 'bg-[#D4AF37] text-black' : 'text-[#666]'}`}>
+            新規保存
+          </button>
+        </div>
+
+        {activeView === 'create' && (
+          <div className="space-y-4 animate-in fade-in">
+            {currentExercises.length === 0 ? (
+              <p className="text-xs text-[#666] text-center py-8">種目を追加してからテンプレートを保存できます</p>
+            ) : (
+              <>
+                <div>
+                  <label className="text-[10px] text-[#555] mb-2 block">テンプレート名</label>
+                  <input type="text" value={newTemplateName} onChange={(e) => setNewTemplateName(e.target.value)} placeholder="例: 胸の日、脚の日" className="w-full bg-[#050505] border border-[#222] text-white p-3 rounded focus:border-[#D4AF37] outline-none text-sm" />
+                </div>
+                <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded p-3">
+                  <p className="text-[10px] text-[#555] mb-2">保存される種目:</p>
+                  <div className="space-y-1">
+                    {currentExercises.map((ex, i) => (
+                      <div key={i} className="text-xs text-[#D4AF37] flex items-center gap-2"><CheckCircle2 size={12} /> {ex.name}</div>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={handleSaveTemplate} disabled={!newTemplateName.trim()} className="w-full bg-[#D4AF37] text-black py-3 rounded font-bold text-sm disabled:bg-[#222] disabled:text-[#444] transition-all flex items-center justify-center gap-2">
+                  <CheckCircle2 size={14} /> テンプレートを保存
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeView === 'list' && (
+          <div className="space-y-2 max-h-96 overflow-y-auto animate-in fade-in">
+            {templates.length === 0 ? (
+              <p className="text-xs text-[#666] text-center py-8">保存されたテンプレートがありません</p>
+            ) : (
+              templates.map(template => (
+                <div key={template.id} className="bg-[#0a0a0a] border border-[#222] rounded-lg p-3 hover:border-[#D4AF37]/40 transition-all">
+                  <div className="flex justify-between items-start mb-2">
+                    <h4 className="font-bold text-[#D4AF37] text-sm">{template.name}</h4>
+                    <button onClick={() => handleDeleteTemplate(template.id)} className="text-[#444] hover:text-red-500 transition-colors"><Trash2 size={14} /></button>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mb-3">
+                    {template.exerciseNames.map((name, i) => (
+                      <span key={i} className="text-[9px] bg-[#111] text-[#666] px-2 py-1 rounded border border-[#1a1a1a]">{name}</span>
+                    ))}
+                  </div>
+                  <button onClick={() => { onLoadTemplate(template.exerciseNames); onClose(); }} className="w-full bg-[#1a1a1a] hover:bg-[#222] text-[#D4AF37] py-2 rounded text-xs font-bold transition-all flex items-center justify-center gap-2 border border-[#333]">
+                    <Plus size={12} /> 読み込む
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const NavButton = ({ icon, label, active, onClick }: any) => (
   <button onClick={onClick} className={`flex flex-col items-center gap-1.5 group transition-all duration-300 ${active ? '-translate-y-1' : ''}`}>
@@ -1066,6 +1252,107 @@ const BodyWeightTrendCard = ({ workouts }: { workouts: WorkoutSession[] }) => {
     );
 };
 
+// ★ NEW: トレーニングストリークカード ★
+const StreakCard = ({ workouts }: { workouts: WorkoutSession[] }) => {
+  const streak = useMemo(() => calculateStreak(workouts), [workouts]);
+
+  if (streak.best === 0 && streak.current === 0) return null;
+
+  return (
+    <div className="mb-6 bg-[#0f0f0f] border border-[#222] rounded-xl p-4 relative overflow-hidden shadow-xl animate-in fade-in slide-in-from-top-4 duration-500">
+      <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-[#ff6b35] to-transparent opacity-70"></div>
+      <h3 className="text-[10px] text-[#555] uppercase tracking-widest mb-4 flex items-center gap-2">
+        <Flame size={12} className="text-[#ff6b35]" /> TRAINING STREAK
+      </h3>
+      <div className="grid grid-cols-2 gap-4">
+        {/* 現在のストリーク */}
+        <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-3 relative overflow-hidden">
+          <div className={`absolute -right-4 -bottom-4 w-16 h-16 blur-[40px] opacity-20 ${streak.current >= 7 ? 'bg-[#ff6b35]' : 'bg-[#444]'}`} />
+          <p className="text-[9px] text-[#555] uppercase tracking-wider mb-2">現在の連続記録</p>
+          <div className="flex items-baseline gap-1 relative z-10">
+            <span className={`text-3xl font-black font-mono ${streak.current >= 7 ? 'text-[#ff6b35]' : streak.current >= 3 ? 'text-yellow-500' : 'text-[#666]'}`}>
+              {streak.current}
+            </span>
+            <span className="text-xs text-[#555]">日</span>
+          </div>
+          {streak.current >= 7 && (
+            <div className="mt-2 flex items-center gap-1">
+              <Flame size={10} className="text-[#ff6b35] animate-pulse" />
+              <span className="text-[8px] text-[#ff6b35] font-bold">ON FIRE!</span>
+            </div>
+          )}
+        </div>
+        {/* 最高記録 */}
+        <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-3 relative overflow-hidden">
+          <div className="absolute -right-4 -bottom-4 w-16 h-16 bg-[#D4AF37] blur-[40px] opacity-10" />
+          <p className="text-[9px] text-[#555] uppercase tracking-wider mb-2">最高記録</p>
+          <div className="flex items-baseline gap-1 relative z-10">
+            <span className="text-3xl font-black font-mono text-[#D4AF37]">{streak.best}</span>
+            <span className="text-xs text-[#555]">日</span>
+          </div>
+          {streak.current === streak.best && streak.best > 1 && (
+            <div className="mt-2 flex items-center gap-1">
+              <Trophy size={10} className="text-[#D4AF37]" />
+              <span className="text-[8px] text-[#D4AF37] font-bold">BEST!</span>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="mt-4 pt-3 border-t border-[#1a1a1a]">
+        <p className="text-[9px] text-[#444] text-center">
+          {streak.current === 0 ? '今日から新しいストリークを始めよう！' :
+           streak.current === 1 ? '良いスタート！明日も続けよう。' :
+           streak.current < 7 ? `あと${7 - streak.current}日で1週間達成！` :
+           streak.current < 30 ? '素晴らしい継続力！🔥' :
+           'レジェンド級の継続！'}
+        </p>
+      </div>
+    </div>
+  );
+};
+
+// ★ NEW: 週間ボリューム推移チャート ★
+const WeeklyVolumeChart = ({ workouts }: { workouts: WorkoutSession[] }) => {
+  const weeklyData = useMemo(() => {
+    const weekMap: { [key: string]: number } = {};
+    workouts.forEach(session => {
+      const date = new Date(session.date);
+      const week = getISOWeek(date);
+      const volume = calculateSessionVolume(session);
+      weekMap[week] = (weekMap[week] || 0) + volume;
+    });
+    const weeks = Object.keys(weekMap).sort().slice(-12);
+    return weeks.map(week => ({
+      week: week.substring(5),
+      volume: weekMap[week]
+    }));
+  }, [workouts]);
+
+  if (weeklyData.length < 2) return null;
+
+  return (
+    <div className="mb-6 bg-[#0f0f0f] border border-[#222] rounded-xl p-4 shadow-xl animate-in fade-in slide-in-from-top-4 duration-500">
+      <h3 className="text-[10px] text-[#555] uppercase tracking-widest mb-4 flex items-center gap-2">
+        <TrendingUp size={12} className="text-[#D4AF37]" /> WEEKLY VOLUME (12 WEEKS)
+      </h3>
+      <div className="h-48">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={weeklyData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
+            <XAxis dataKey="week" stroke="#444" fontSize={9} tick={{ fill: '#666' }} tickMargin={5} axisLine={false} tickLine={false} />
+            <YAxis stroke="#444" fontSize={9} tick={{ fill: '#666' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
+            <RechartsTooltip
+              contentStyle={{ backgroundColor: '#000', border: '1px solid #333', color: '#fff', borderRadius: '6px' }}
+              itemStyle={{ color: '#D4AF37' }}
+              formatter={(value: number) => [`${value.toLocaleString()} kg`, 'Volume']}
+            />
+            <Bar dataKey="volume" fill="#D4AF37" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+};
 
 const MetricCard = ({ initialWeight, initialMemo, onSave }: any) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -1081,14 +1368,19 @@ const MetricCard = ({ initialWeight, initialMemo, onSave }: any) => {
 
 // --- Screens ---
 
-const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMap }: any) => {
+const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMap, userId }: any) => {
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [bodyWeight, setBodyWeight] = useState<string>('');
   const [memo, setMemo] = useState<string>('');
   const [isCalcOpen, setIsCalcOpen] = useState(false);
-  const [isReceiptOpen, setIsReceiptOpen] = useState(false); // ★ NEW: レシートモーダル用
-  const [showPRModal, setShowPRModal] = useState(false); // ★ NEW: PR演出用
-  const [prWeight, setPrWeight] = useState(0); // ★ NEW: PRの重量
+  const [isReceiptOpen, setIsReceiptOpen] = useState(false);
+  const [showPRModal, setShowPRModal] = useState(false);
+  const [prWeight, setPrWeight] = useState(0);
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false); // ★ テンプレート
+  const [editingSet, setEditingSet] = useState<{ exIndex: number; setIndex: number } | null>(null); // ★ セット編集
+  const [editWeight, setEditWeight] = useState('');
+  const [editReps, setEditReps] = useState('');
+  const [editDistance, setEditDistance] = useState('');
 
   useEffect(() => {
     const session = workouts.find((w: WorkoutSession) => w.date === targetDate);
@@ -1240,7 +1532,46 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
     const session: WorkoutSession = { id: targetDate, date: targetDate, exercises: newEx, bodyWeight: wVal, memo: newMemo };
     onSave(session);
   };
-  
+
+  // ★ テンプレート読み込み
+  const handleLoadTemplate = (exerciseNames: string[]) => {
+    const newExercises: Exercise[] = exerciseNames.map(name => ({
+      id: Date.now().toString() + Math.random().toString(36).substring(2),
+      name,
+      sets: []
+    }));
+    setExercises(newExercises);
+    persistSession(newExercises, bodyWeight, memo);
+  };
+
+  // ★ セット編集
+  const startEditSet = (exIndex: number, setIndex: number, set: SetData) => {
+    setEditingSet({ exIndex, setIndex });
+    setEditWeight(set.weight.toString());
+    setEditReps(set.reps.toString());
+    setEditDistance(set.distanceKm?.toString() || '');
+  };
+
+  const saveEditSet = (exIndex: number, setIndex: number) => {
+    const updated = [...exercises];
+    const w = parseFloat(editWeight) || 0;
+    const r = parseInt(editReps) || 0;
+    const d = editDistance ? parseFloat(editDistance) : undefined;
+    updated[exIndex].sets[setIndex] = {
+      ...updated[exIndex].sets[setIndex],
+      weight: w,
+      reps: r,
+      ...(d !== undefined && !isNaN(d) && d > 0 ? { distanceKm: d } : {})
+    };
+    setExercises(updated);
+    persistSession(updated, bodyWeight, memo);
+    setEditingSet(null);
+  };
+
+  const cancelEditSet = () => {
+    setEditingSet(null);
+  };
+
   // ★ NEW: PR演出を表示する関数
   const showPRCelebration = (weight: number) => {
     setPrWeight(weight);
@@ -1316,6 +1647,12 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
         <button onClick={() => changeDate(-1)} className="p-2 hover:bg-[#111] rounded-full text-[#666] hover:text-[#D4AF37] transition-colors"><ChevronLeft size={20} /></button>
         <div className="text-center"><input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className="bg-transparent text-[#e5e5e5] font-bold text-lg text-center focus:outline-none font-mono tracking-tight" /></div>
         <button onClick={() => changeDate(1)} className="p-2 hover:bg-[#111] rounded-full text-[#666] hover:text-[#D4AF37] transition-colors"><ChevronRight size={20}/></button>
+      </div>
+      {/* ★ テンプレートボタン */}
+      <div className="flex justify-center">
+        <button onClick={() => setIsTemplateModalOpen(true)} className="bg-[#1a1a1a] border border-[#D4AF37]/30 text-[#D4AF37] px-4 py-2 rounded-lg text-xs font-bold hover:bg-[#D4AF37]/10 transition-all flex items-center gap-2">
+          <Copy size={14} /> テンプレート
+        </button>
       </div>
       <div className="bg-[#0f0f0f] p-5 rounded shadow-2xl border border-[#222] space-y-4 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-[#D4AF37] to-transparent opacity-70"></div>
@@ -1530,6 +1867,7 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
       </div>
       <PlateCalculatorModal isOpen={isCalcOpen} onClose={() => setIsCalcOpen(false)} targetWeight={parseFloat(weightInput) || 0} />
       <ShareReceiptModal isOpen={isReceiptOpen} onClose={() => setIsReceiptOpen(false)} session={currentSession} /> {/* ★ レシートモーダル */}
+      <TemplateModal isOpen={isTemplateModalOpen} onClose={() => setIsTemplateModalOpen(false)} currentExercises={exercises} onLoadTemplate={handleLoadTemplate} userId={userId} />
       
       <div className="space-y-3">
         {exercises.length > 0 && (
@@ -1549,29 +1887,54 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
             <div className="divide-y divide-[#1a1a1a]">
               {ex.sets.map((set: SetData & { isPR?: boolean }, setIndex: number) => {
                 const isSetCardio = CARDIO_EXERCISES.includes(ex.name);
+                const isEditing = editingSet?.exIndex === exIndex && editingSet?.setIndex === setIndex;
                 return (
                   <div key={set.id} className="flex justify-between items-center p-3 hover:bg-[#161616] transition-colors">
                     <span className="text-[#444] w-6 font-mono text-[10px]">{(setIndex + 1).toString().padStart(2, '0')}</span>
-                    <div className="flex-1 flex items-baseline gap-3">
-                      {isSetCardio ? (
-                        <div className='flex items-baseline gap-3'>
-                            {set.distanceKm && <><span className="font-mono font-bold text-base text-[#e5e5e5] w-16 text-right">{set.distanceKm} <span className="text-[10px] text-[#444] font-sans font-normal">KM</span></span><span className="text-[#333]">/</span></>}
-                            <span className="font-mono font-bold text-base text-[#e5e5e5] w-24 text-right">{formatDuration(set.reps)} <span className="text-[10px] text-[#444] font-sans font-normal">TIME</span></span>
-                            <span className="text-[#333]">/</span>
-                            <span className="font-mono font-bold text-base text-[#e5e5e5] w-12">Lv.{set.weight} <span className="text-[10px] text-[#444] font-sans font-normal">GEAR</span></span>
+                    {isEditing ? (
+                      <div className="flex-1 flex items-center gap-2 animate-in fade-in">
+                        {isSetCardio ? (
+                          <>
+                            <input type="number" step="0.1" value={editDistance} onChange={(e) => setEditDistance(e.target.value)} className="w-16 bg-[#050505] border border-[#D4AF37] text-white p-1.5 rounded text-xs font-mono text-center" placeholder="km" />
+                            <input type="number" value={editReps} onChange={(e) => setEditReps(e.target.value)} className="w-16 bg-[#050505] border border-[#D4AF37] text-white p-1.5 rounded text-xs font-mono text-center" placeholder="秒" />
+                            <input type="number" value={editWeight} onChange={(e) => setEditWeight(e.target.value)} className="w-14 bg-[#050505] border border-[#D4AF37] text-white p-1.5 rounded text-xs font-mono text-center" placeholder="Lv" />
+                          </>
+                        ) : (
+                          <>
+                            <input type="number" value={editWeight} onChange={(e) => setEditWeight(e.target.value)} className="w-20 bg-[#050505] border border-[#D4AF37] text-white p-1.5 rounded text-xs font-mono text-center" placeholder="kg" />
+                            <span className="text-[#555]">×</span>
+                            <input type="number" value={editReps} onChange={(e) => setEditReps(e.target.value)} className="w-16 bg-[#050505] border border-[#D4AF37] text-white p-1.5 rounded text-xs font-mono text-center" placeholder="reps" />
+                          </>
+                        )}
+                        <button onClick={() => saveEditSet(exIndex, setIndex)} className="text-green-500 hover:text-green-400 p-1"><CheckCircle2 size={16} /></button>
+                        <button onClick={cancelEditSet} className="text-[#666] hover:text-white p-1"><X size={16} /></button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex-1 flex items-baseline gap-3">
+                          {isSetCardio ? (
+                            <div className="flex items-baseline gap-3">
+                              {set.distanceKm && <><span className="font-mono font-bold text-base text-[#e5e5e5] w-16 text-right">{set.distanceKm} <span className="text-[10px] text-[#444] font-sans font-normal">KM</span></span><span className="text-[#333]">/</span></>}
+                              <span className="font-mono font-bold text-base text-[#e5e5e5] w-24 text-right">{formatDuration(set.reps)} <span className="text-[10px] text-[#444] font-sans font-normal">TIME</span></span>
+                              <span className="text-[#333]">/</span>
+                              <span className="font-mono font-bold text-base text-[#e5e5e5] w-12">Lv.{set.weight} <span className="text-[10px] text-[#444] font-sans font-normal">GEAR</span></span>
+                            </div>
+                          ) : (
+                            <div className="flex items-baseline gap-3">
+                              <span className="font-mono font-bold text-base text-[#e5e5e5] w-16 text-right">{set.weight} <span className="text-[10px] text-[#444] font-sans font-normal">kg</span></span><span className="text-[#333]">/</span>
+                              <span className="font-mono font-bold text-base text-[#e5e5e5] w-12">{set.reps} <span className="text-[10px] text-[#444] font-sans font-normal">回</span></span>
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <div className='flex items-baseline gap-3'>
-                          <span className="font-mono font-bold text-base text-[#e5e5e5] w-16 text-right">{set.weight} <span className="text-[10px] text-[#444] font-sans font-normal">kg</span></span><span className="text-[#333]">/</span>
-                          <span className="font-mono font-bold text-base text-[#e5e5e5] w-12">{set.reps} <span className="text-[10px] text-[#444] font-sans font-normal">回</span></span>
+                        {!isSetCardio && (set as any).isPR && (
+                          <Trophy size={14} className="text-[#D4AF37] shadow-[0_0_5px_#D4AF37]" />
+                        )}
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => startEditSet(exIndex, setIndex, set)} className="text-[#444] hover:text-[#D4AF37] p-1.5 transition-colors"><Edit3 size={14} /></button>
+                          <button onClick={() => removeSet(exIndex, setIndex)} className="text-[#333] hover:text-red-900 p-1.5 transition-colors"><Trash2 size={14} /></button>
                         </div>
-                      )}
-                    </div>
-                    {/* PR Trophie Icon */}
-                    {!isSetCardio && (set as any).isPR && (
-                        <Trophy size={14} className='text-[#D4AF37] shadow-[0_0_5px_#D4AF37]' />
+                      </>
                     )}
-                    <div className="flex items-center gap-4"><button onClick={() => removeSet(exIndex, setIndex)} className="text-[#333] hover:text-red-900 p-2 transition-colors"><Trash2 size={14} /></button></div>
                   </div>
                 );
               })}
@@ -1688,6 +2051,8 @@ const StatsScreen = ({ workouts }: { workouts: WorkoutSession[] }) => {
   const isCardioSelected = CARDIO_EXERCISES.includes(selectedExercise);
   return (
     <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
+      {/* ★ NEW: 週間ボリューム推移 */}
+      <WeeklyVolumeChart workouts={workouts} />
       <div className="bg-[#0f0f0f] p-4 rounded border border-[#222]"><label className="text-[10px] text-[#666] block mb-2 font-bold">分析する種目</label><div className="relative"><select value={selectedExercise} onChange={(e) => setSelectedExercise(e.target.value)} className="w-full bg-[#050505] text-[#e5e5e5] p-3 rounded border border-[#222] focus:border-[#D4AF37] outline-none appearance-none text-sm">{uniqueExercises.map(name => <option key={name} value={name}>{name}</option>)}</select><div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-[#666]">▼</div></div></div>
       <div className="flex bg-[#0a0a0a] p-1 rounded border border-[#222]"><button onClick={() => setChartMode('max')} className={`flex-1 py-2 text-xs font-bold rounded transition-all ${chartMode === 'max' ? 'bg-[#D4AF37] text-black shadow' : 'text-[#666]'}`}>{isCardioSelected ? '最大ギア/負荷' : '最大重量 (Max)'}</button><button onClick={() => setChartMode('volume')} className={`flex-1 py-2 text-xs font-bold rounded transition-all ${chartMode === 'volume' ? 'bg-[#D4AF37] text-black shadow' : 'text-[#666]'}`}>{isCardioSelected ? '総運動量 (負荷×時間)' : '総負荷量 (Volume)'}</button></div>
       <div className="bg-[#0f0f0f] p-2 rounded border border-[#222] h-80 relative shadow-2xl overflow-hidden"><div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-[#D4AF37]/50 to-transparent"></div><div className="absolute top-4 left-6 flex items-center gap-2 text-[10px] font-bold z-10 pointer-events-none"><div className="w-2 h-2 bg-[#D4AF37]"></div><span className="text-[#D4AF37]">{chartMode === 'max' ? (isCardioSelected ? 'MAX GEAR (Lv)' : 'MAX WEIGHT (kg)') : 'TOTAL VOLUME'}</span></div><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{ top: 40, right: 10, left: -10, bottom: 0 }}><defs><linearGradient id="colorMain" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#D4AF37" stopOpacity={0.4}/><stop offset="95%" stopColor="#D4AF37" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="2 4" stroke="#222" vertical={false} /><XAxis dataKey="date" stroke="#444" fontSize={9} tick={{fill: '#444'}} tickMargin={10} axisLine={false} tickLine={false} /><YAxis stroke="#444" fontSize={9} tick={{fill: '#444'}} domain={['dataMin', 'auto']} axisLine={false} tickLine={false} /><RechartsTooltip content={({ active, payload, label }) => { if (active && payload && payload.length) { const data = payload[0].payload; return (<div className="bg-[#000] border border-[#333] p-3 shadow-xl rounded"><div className="text-[#666] text-[9px] mb-1 font-mono">{label}</div><div className="text-[#D4AF37] font-bold text-sm font-mono mb-1">{chartMode === 'max' ? `${data.maxWeight} ${isCardioSelected ? 'Lv' : 'kg'}` : `${data.totalVolume}`}</div></div>); } return null; }} /><Area type="monotone" dataKey={chartMode === 'max' ? 'maxWeight' : 'totalVolume'} stroke="#D4AF37" strokeWidth={2} fillOpacity={1} fill="url(#colorMain)" animationDuration={1000} /></AreaChart></ResponsiveContainer></div>
@@ -1857,6 +2222,9 @@ export default function TrainingLogAppDeploy() {
                 {/* ★ NEW: 体重トレンドカード (改良案C) ★ */}
                 <BodyWeightTrendCard workouts={workouts} />
 
+                {/* ★ NEW: 連続トレーニング日数 ★ */}
+                <StreakCard workouts={workouts} />
+
                 {/* ★ NEW: トレーニング・ヒートマップ ★ */}
                 <TrainingHeatmap workouts={workouts} />
 
@@ -1977,12 +2345,13 @@ export default function TrainingLogAppDeploy() {
         {/* ★ 制約対応 END ★ */}
 
         {activeTab === 'record' && (
-          <RecordScreen 
+          <RecordScreen
             targetDate={targetDate}
             setTargetDate={setTargetDate}
             workouts={workouts}
             onSave={saveWorkoutSession}
-            maxVolumeMap={maxVolumeMap} 
+            maxVolumeMap={maxVolumeMap}
+            userId={user?.uid || null}
           />
         )}
         {activeTab === 'calendar' && (
