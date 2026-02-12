@@ -123,12 +123,9 @@ const RANKS = [
 const calculateSessionVolume = (session: WorkoutSession): number => {
     return session.exercises.reduce((sessionSum, exercise) => {
         return sessionSum + exercise.sets.reduce((setSum, set) => {
-            const isDumbbell = exercise.name.toLowerCase().includes('ダンベル') || exercise.name.toLowerCase().includes('dumbbell');
-            if (CARDIO_EXERCISES.includes(exercise.name)) return setSum; 
-            
-            const effectiveWeight = isDumbbell ? set.weight * 2 : set.weight;
-            
-            return setSum + (effectiveWeight * set.reps);
+            if (CARDIO_EXERCISES.includes(exercise.name)) return setSum;
+
+            return setSum + (set.weight * set.reps);
         }, 0);
     }, 0);
 };
@@ -1614,11 +1611,9 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
       prDisplayValue = currentDistance;
       prDisplayUnit = 'km';
     } else {
-      const isDumbbell = currentExerciseName.toLowerCase().includes('ダンベル') || currentExerciseName.toLowerCase().includes('dumbbell');
-      const effectiveWeight = isDumbbell ? w * 2 : w;
-      const currentSetVolume = effectiveWeight * r;
+      const currentSetVolume = w * r;
       isNewPR = currentSetVolume > (maxVolumeMap[currentExerciseName] || 0);
-      prDisplayValue = effectiveWeight;
+      prDisplayValue = w;
       prDisplayUnit = 'kg';
     }
 
@@ -2109,9 +2104,7 @@ export default function TrainingLogAppDeploy() {
                         map[e.name] = distance;
                     }
                 } else {
-                    const isDumbbell = e.name.toLowerCase().includes('ダンベル') || e.name.toLowerCase().includes('dumbbell');
-                    const effectiveWeight = isDumbbell ? set.weight * 2 : set.weight;
-                    const volume = effectiveWeight * set.reps;
+                    const volume = set.weight * set.reps;
                     if (volume > (map[e.name] || 0)) {
                         map[e.name] = volume;
                     }
