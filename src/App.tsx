@@ -1375,7 +1375,8 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
   const [isCalcOpen, setIsCalcOpen] = useState(false);
   const [isReceiptOpen, setIsReceiptOpen] = useState(false);
   const [showPRModal, setShowPRModal] = useState(false);
-  const [prWeight, setPrWeight] = useState(0);
+  const [prValue, setPrValue] = useState(0);
+  const [prUnit, setPrUnit] = useState<'kg' | 'km'>('kg');
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false); // ★ テンプレート
   const [editingSet, setEditingSet] = useState<{ exIndex: number; setIndex: number } | null>(null); // ★ セット編集
   const [editWeight, setEditWeight] = useState('');
@@ -1573,8 +1574,9 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
   };
 
   // ★ NEW: PR演出を表示する関数
-  const showPRCelebration = (weight: number) => {
-    setPrWeight(weight);
+  const showPRCelebration = (value: number, unit: 'kg' | 'km') => {
+    setPrValue(value);
+    setPrUnit(unit);
     setShowPRModal(true);
     // 3秒後に自動で閉じる
     setTimeout(() => {
@@ -1600,32 +1602,47 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
         newSet.distanceKm = d;
     }
     
-    const isDumbbell = currentExerciseName.toLowerCase().includes('ダンベル') || currentExerciseName.toLowerCase().includes('dumbbell');
-    const effectiveWeight = isDumbbell ? w * 2 : w;
-    const currentSetVolume = effectiveWeight * r;
-    const isNewPR = currentSetVolume > (maxVolumeMap[currentExerciseName] || 0);
+    // ★ PR判定: 有酸素は距離、筋トレはボリュームで判定
+    let isNewPR = false;
+    let prDisplayValue = 0;
+    let prDisplayUnit: 'kg' | 'km' = 'kg';
+
+    if (isCardio) {
+      // 有酸素: 1回の距離が過去最長ならPR
+      const currentDistance = d || 0;
+      isNewPR = currentDistance > (maxVolumeMap[currentExerciseName] || 0);
+      prDisplayValue = currentDistance;
+      prDisplayUnit = 'km';
+    } else {
+      const isDumbbell = currentExerciseName.toLowerCase().includes('ダンベル') || currentExerciseName.toLowerCase().includes('dumbbell');
+      const effectiveWeight = isDumbbell ? w * 2 : w;
+      const currentSetVolume = effectiveWeight * r;
+      isNewPR = currentSetVolume > (maxVolumeMap[currentExerciseName] || 0);
+      prDisplayValue = effectiveWeight;
+      prDisplayUnit = 'kg';
+    }
 
     let updatedExercises = [...exercises];
     const existingIdx = updatedExercises.findIndex(e => e.name === currentExerciseName);
-    
+
     const setWithPR = isNewPR ? { ...newSet, isPR: true } : newSet;
 
-    if (existingIdx >= 0) { updatedExercises[existingIdx] = { ...updatedExercises[existingIdx], sets: [...updatedExercises[existingIdx].sets, setWithPR] }; } 
+    if (existingIdx >= 0) { updatedExercises[existingIdx] = { ...updatedExercises[existingIdx], sets: [...updatedExercises[existingIdx].sets, setWithPR] }; }
     else { updatedExercises.push({ id: Date.now().toString(), name: currentExerciseName, sets: [setWithPR] }); }
     setExercises(updatedExercises);
     persistSession(updatedExercises, bodyWeight, memo);
-    
+
     setRepsInput('');
     setDistanceInput('');
-    
+
     // ★ セット記録後に自動でインターバルタイマーを開始（有酸素運動以外）
     if (!isCardio) {
       timerEventTarget.dispatchEvent(new CustomEvent('startTimer'));
     }
-    
+
     if(isNewPR) {
       // カスタムPR演出を表示
-      showPRCelebration(effectiveWeight);
+      showPRCelebration(prDisplayValue, prDisplayUnit);
     }
   };
   const removeSet = (exIndex: number, setIndex: number) => {
@@ -1926,7 +1943,7 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
                             </div>
                           )}
                         </div>
-                        {!isSetCardio && (set as any).isPR && (
+                        {(set as any).isPR && (
                           <Trophy size={14} className="text-[#D4AF37] shadow-[0_0_5px_#D4AF37]" />
                         )}
                         <div className="flex items-center gap-2">
@@ -1986,9 +2003,9 @@ const RecordScreen = ({ targetDate, setTargetDate, workouts, onSave, maxVolumeMa
                 </h2>
                 <div className="flex items-baseline justify-center gap-3">
                   <span className="text-6xl font-black font-mono text-[#FFD700] drop-shadow-[0_0_15px_rgba(255,215,0,0.8)]">
-                    {prWeight}
+                    {prValue}
                   </span>
-                  <span className="text-3xl font-bold text-[#FFA500]">kg</span>
+                  <span className="text-3xl font-bold text-[#FFA500]">{prUnit}</span>
                 </div>
                 <div className="flex justify-center gap-2 mt-4">
                   <Zap size={24} className="text-[#FFD700] animate-pulse" />
@@ -2085,7 +2102,13 @@ export default function TrainingLogAppDeploy() {
     workouts.forEach(w => {
         w.exercises?.forEach(e => {
             e.sets.forEach(set => {
-                if (!CARDIO_EXERCISES.includes(e.name)) {
+                if (CARDIO_EXERCISES.includes(e.name)) {
+                    // 有酸素: 最大距離(km)をトラッキング
+                    const distance = set.distanceKm || 0;
+                    if (distance > (map[e.name] || 0)) {
+                        map[e.name] = distance;
+                    }
+                } else {
                     const isDumbbell = e.name.toLowerCase().includes('ダンベル') || e.name.toLowerCase().includes('dumbbell');
                     const effectiveWeight = isDumbbell ? set.weight * 2 : set.weight;
                     const volume = effectiveWeight * set.reps;
